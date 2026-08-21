@@ -1,7 +1,7 @@
 # miband-mcp 策划与运维手册
 
-> 版本：v0.1（骨架交付版） · 日期：2026-08-19
-> 搭建：Qwen（千问办公助理） · 精调：晨曦 · 评审：陈熹 × 晨曦
+> 版本：v0.2（真机验证版） · 日期：2026-08-21
+> 搭建：Qwen（千问办公助理） · 精调/验证：晨曦 · 评审：陈熹 × 晨曦
 > 定位：本文档是本项目的"总账本"——后期维护、查看、辨别、判断都以它为准。
 > 依据文档：《miband-mcp-规格书-Qwen版.md》《回复Qwen-4问评审.md》
 
@@ -13,20 +13,19 @@
 SQLite 里的小米手环 9 健康数据（心率/睡眠/步数），通过 MCP 协议暴露给
 Reasonix AI，让 AI 能回答"陈熹今天睡得好吗"这类问题。
 
-**当前状态（2026-08-19）**：
+**当前状态（2026-08-21）**：
 
 | 项 | 状态 |
 |---|---|
 | 代码骨架（4 个模块 + 主入口） | ✅ 完成 |
 | 测试（34 个用例，全部通过） | ✅ 完成 |
 | 规格书 §7 验收清单（7 项） | ✅ 全部实测通过（见 §7） |
-| 真机数据接入 | ⏳ **未开始**——表结构/列名均为社区口径，待晨曦真机验证 |
-| Reasonix 侧 MCP 注册 | ⏳ 未开始（依赖真机验证通过后配置） |
+| **真机数据接入** | ✅ **已完成（2026-08-21）**——陈熹手环 9 真实数据经 Gadgetbridge 导出，get_daily 实测返回 239 步/平均心率 77 |
+| 真机列名适配 | ✅ 已完成——db.py/aggregator.py 字段对齐大写列名（TIMESTAMP/HEART_RATE/STEPS/RAW_KIND/WAKEUP_TIME/STAGE） |
+| Reasonix 侧 MCP 注册 | ✅ 已完成——reasonix.toml 注册 miband 插件（stdio + auto_start），待 /new 生效 |
+| GitHub 开源 | ✅ 已上线——github.com/ChenxiDawn/miband-mcp（公开仓库，健康数据已排除） |
 
-**给晨曦的核心提示**：骨架已可跑通全链路（端到端 stdio 会话实测通过），
-但**数据层的一切假设（表名、列名、时间戳单位、分期编码、采样间隔）
-都来自规格书与社区教程口径，未经真机验证**。精调的第一优先级是拿真机
-导出的 Gadgetbridge 数据库逐列核对，对照清单在 §6。
+**给晨曦的提示**：数据链路已跑通，`get_hr` 暂为空是因为手环 9 未连续测心率（HEART_RATE=0）；等手环产生有效心率采样后自动填充。下一目标：Gadgetbridge 自动导出 → 电脑自动同步的自动化链路。
 
 ---
 
@@ -105,10 +104,10 @@ aggregator.py 里出现任何 SQL 都属于越界。精调时请守住这条线�
 
 | 假设 | 取值 | 位置 | 备注 |
 |---|---|---|---|
-| 睡眠分期采样间隔 | 每条 5 分钟 | `aggregator.SLEEP_STAGE_MIN` | Gadgetbridge 惯例，待真机验证 |
-| 活动采样间隔 | 每条 1 分钟 | `aggregator.ACTIVITY_SAMPLE_MIN` | 用于折算 active_min，待真机验证 |
-| 活动状态 raw_kind | `{1}` 视为活动中 | `db.ACTIVE_RAW_KINDS` | Gadgetbridge ActivityKind 惯例，待真机验证 |
-| 每日汇总 date 列 | `'YYYY-MM-DD'` 字符串，也兼容时间戳 | `aggregator._daily_row_date` | 格式待真机验证 |
+| 睡眠分期采样间隔 | 每条 5 分钟 | `aggregator.SLEEP_STAGE_MIN` | Gadgetbridge 惯例，待过夜数据确认 |
+| 活动采样间隔 | 每条 1 分钟 | `aggregator.ACTIVITY_SAMPLE_MIN` | 用于折算 active_min，待过夜数据确认 |
+| 活动状态 raw_kind | `{1}` 视为活动中 | `db.ACTIVE_RAW_KINDS` | Gadgetbridge ActivityKind 惯例，待过夜数据确认 |
+| 每日汇总 date 列 | 真机为 TIMESTAMP 秒级时间戳 | `aggregator._daily_row_date` | ✅ 已按真机确认 |
 | quality 字段 | 占位启发式（有完整睡眠段即 normal） | `aggregator.aggregate_sleep` | 真实评分规则待晨曦定义 |
 
 ---
@@ -157,24 +156,22 @@ aggregator.py 里出现任何 SQL 都属于越界。精调时请守住这条线�
 
 ---
 
-## 5. 数据源约定（待真机验证总表）
+## 5. 数据源约定（真机验证总表 · 2026-08-21 已验证）
 
-以下全部来自规格书 §4 与社区教程，**没有一项经过真机核对**。
-晨曦拿到真机导出库后，请逐行比对并把本表的"验证"列打钩。
+以下表名/列名均来自陈熹手环 9 真机导出的 Gadgetbridge 数据库，**已经逐列核对**。
 
 | 表名（规格书口径） | 代码常量 | 依赖列 | 验证 |
 |---|---|---|---|
-| `XIAOMI_ACTIVITY_SAMPLE` | `db.TABLE_ACTIVITY` | ts, heart_rate, steps, raw_intensity, raw_kind | ☐ |
-| `XIAOMI_SLEEP_STAGE_SAMPLE` | `db.TABLE_SLEEP_STAGE` | ts, sleep_stage | ☐ |
-| `XIAOMI_DAILY_SUMMARY_SAMPLE` | `db.TABLE_DAILY` | date, steps, calories | ☐ |
-| `XIAOMI_SLEEP_TIME_SAMPLE` | `db.TABLE_SLEEP_TIME` | start_ts, end_ts | ☐ |
+| `XIAOMI_ACTIVITY_SAMPLE` | `db.TABLE_ACTIVITY` | TIMESTAMP, HEART_RATE, STEPS, RAW_INTENSITY, RAW_KIND, SPO2, DISTANCE_CM, ACTIVE_CALORIES, ENERGY | ✅ |
+| `XIAOMI_SLEEP_STAGE_SAMPLE` | `db.TABLE_SLEEP_STAGE` | TIMESTAMP, STAGE | ✅（0 行，待过夜数据） |
+| `XIAOMI_DAILY_SUMMARY_SAMPLE` | `db.TABLE_DAILY` | TIMESTAMP, STEPS, HR_RESTING, HR_AVG, HR_MIN, HR_MAX, STRESS_AVG | ✅ |
+| `XIAOMI_SLEEP_TIME_SAMPLE` | `db.TABLE_SLEEP_TIME` | TIMESTAMP, WAKEUP_TIME, TOTAL_DURATION, DEEP_SLEEP_DURATION, LIGHT_SLEEP_DURATION, REM_SLEEP_DURATION | ✅（0 行，待过夜数据） |
 
-补充待验证项：
-- ☐ `ts`/`start_ts`/`end_ts` 的单位（秒 vs 毫秒 → `db.TS_UNIT` 开关）
-- ☐ sleep_stage 编码是否真为 0/1/2/3
-- ☐ 心率 255 哨兵在该固件版本是否成立
-- ☐ raw_kind 的"活动中"取值是否为 1
-- ☐ 各表的真实采样间隔（影响 stages/active_min 折算）
+真机验证结论（2026-08-21）：
+- ✅ 时间戳为**秒级**（`db.TS_UNIT` 保持默认）
+- ✅ 列名全部**大写**（与骨架初始假设的小写不同，已在 db.py/aggregator.py 修正）
+- ✅ 每日汇总 TIMESTAMP 为当天 0 点的秒级时间戳（`_daily_row_date` 已按此解析）
+- ⏳ 睡眠表暂为 0 行——手环 9 的过夜睡眠数据待同步后验证分期编码（0/1/2/3）
 
 ---
 
