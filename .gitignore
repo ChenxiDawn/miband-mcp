@@ -1,0 +1,27 @@
+# 健康数据 —— 绝不提交（红线）
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# 密钥与凭据
+*.key
+*.pem
+.env
+AuthKey*
+*encryptKey*
+*secret*
+
+# 日志与临时文件
+*.log
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+
+# 个人截图/附件（含设备信息）
+attachments/
+*.jpg
+*.png
+*.jpeg
