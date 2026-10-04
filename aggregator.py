@@ -21,7 +21,7 @@ ACTIVITY_SAMPLE_MIN = 1  # 每条活动采样代表的分钟数（用于折算 a
 # 数据新鲜度来源标注（规格书 §3.1 返回字段 source）
 SOURCE_TAG = "gadgetbridge"
 
-STAGE_NAMES = ("light", "deep", "rem")
+STAGE_NAMES = ("awake", "light", "deep", "rem")   # 2026-10-04：补 awake —— 否则 0/5（清醒）的分期会被丢掉
 
 
 # ---------------------------------------------------------------------------
@@ -122,10 +122,22 @@ def aggregate_sleep(date_str, interval, stage_rows):
 
     s, e = interval
     stages = {name: 0 for name in STAGE_NAMES}
-    for row in stage_rows:
+    # 2026-10-04 修正：不再按"每条固定 5 分钟"折算（那样总和远小于整夜），
+    # 改为按"本条到下一采样的时间差"计时；最后一条算到醒来时刻。
+    for i, row in enumerate(stage_rows):
         name = db.SLEEP_STAGE_MAP.get(row.get("STAGE"))
-        if name in stages:
-            stages[name] += SLEEP_STAGE_MIN
+        if name not in stages:
+            continue
+        ts = db.normalize_ts(row.get("TIMESTAMP"))
+        if ts is None:
+            continue
+        if i + 1 < len(stage_rows):
+            nxt = db.normalize_ts(stage_rows[i + 1].get("TIMESTAMP"))
+        else:
+            nxt = e
+        if nxt is None or nxt <= ts:
+            nxt = ts + SLEEP_STAGE_MIN * 60
+        stages[name] += max(1, int((nxt - ts) // 60))
 
     total_min = int((e - s) // 60)
     if total_min <= 0:

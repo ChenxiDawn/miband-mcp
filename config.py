@@ -13,7 +13,7 @@ import sys
 # 默认路径（当环境变量与命令行都未提供时的兜底）
 # ---------------------------------------------------------------------------
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               "data", "Gadgetbridge")
+                               "data", "gadgetbridge.db")   # 2026-10-04 修正：原来写成 "Gadgetbridge"（少了 .db），是死路
 
 # 环境变量名（与 Reasonix 侧配置对齐）
 ENV_DB_KEY = "MIBAND_DB"

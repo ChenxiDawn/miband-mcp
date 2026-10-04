@@ -31,6 +31,21 @@ SERVER_VERSION = "0.1.0"
 # 数据库路径：环境变量 MIBAND_DB > 命令行 --db > 默认路径（见 config.py）
 DB_PATH = config.resolve_db_path()
 
+# ---------------------------------------------------------------------------
+# “只读最近 N 天”窗口（2026-10-04 陈熹提：导出的库会越来越大，不设窗口迟早拖）
+#   默认 2 天；传 0 表示不限制（查历史时用）。相对“查询的那一天”往前算。
+# ---------------------------------------------------------------------------
+WINDOW_DAYS_DEFAULT = 2
+WINDOW_DAYS_MAX = 90
+
+
+def _window_days(arguments):
+    try:
+        d = int(arguments.get("days", WINDOW_DAYS_DEFAULT))
+    except (TypeError, ValueError):
+        raise ValueError("days 必须是整数")
+    return max(0, min(d, WINDOW_DAYS_MAX))
+
 
 def log(msg):
     print(f"[{SERVER_NAME}] {msg}", file=sys.stderr)
@@ -47,9 +62,11 @@ def tool_get_hr(arguments):
         raise ValueError("count 必须是整数")
     count = max(1, min(count, config.HR_MAX_COUNT))
 
+    since_ts = db.ts_floor(_window_days(arguments))
+
     conn = db.open_db(DB_PATH)
     try:
-        rows = db.fetch_latest_activity_samples(conn, count)
+        rows = db.fetch_latest_activity_samples(conn, count, since_ts=since_ts, heart_rate_only=True)
     finally:
         conn.close()
     return aggregator.aggregate_hr(rows)
@@ -61,7 +78,12 @@ def tool_get_sleep(arguments):
 
     conn = db.open_db(DB_PATH)
     try:
-        sleep_time_rows = db.fetch_sleep_time(conn)
+        # 窗口：从“查询日往前 days 天”起（默认 2 天）；days=0 不限
+        days = _window_days(arguments)
+        since_ts = None
+        if days:
+            since_ts = aggregator.date_window(date_str)[0] - days * 86400
+        sleep_time_rows = db.fetch_sleep_time(conn, since_ts=since_ts)
         interval = aggregator.pick_sleep_interval(sleep_time_rows, date_str)
         if interval is None:
             return aggregator.aggregate_sleep(date_str, None, [])
@@ -77,9 +99,11 @@ def tool_get_daily(arguments):
     aggregator.valid_date_str(date_str)
 
     start_ts, end_ts = aggregator.date_window(date_str)
+    days = _window_days(arguments)
+    since_ts = (start_ts - days * 86400) if days else None
     conn = db.open_db(DB_PATH)
     try:
-        daily_rows = db.fetch_daily_summaries(conn)
+        daily_rows = db.fetch_daily_summaries(conn, since_ts=since_ts)
         sample_rows = db.fetch_activity_samples_between(conn, start_ts, end_ts)
     finally:
         conn.close()
@@ -102,7 +126,11 @@ TOOLS = [
                 "count": {
                     "type": "integer",
                     "description": f"条数，默认 {config.HR_DEFAULT_COUNT}，最大 {config.HR_MAX_COUNT}",
-                }
+                },
+                "days": {
+                    "type": "integer",
+                    "description": f"只读最近多少天，默认 {WINDOW_DAYS_DEFAULT}；0 = 不限",
+                },
             },
         },
     },
@@ -110,7 +138,7 @@ TOOLS = [
         "name": "get_sleep",
         "description": (
             "查询指定日期（默认今天）的睡眠情况：入睡/醒来时间、总时长、"
-            "分期分钟数。跨天睡眠归属于'醒来那天'。"
+            "分期分钟数（awake/light/deep/rem）。跨天睡眠归属于'醒来那天'。"
         ),
         "inputSchema": {
             "type": "object",
@@ -118,7 +146,11 @@ TOOLS = [
                 "date": {
                     "type": "string",
                     "description": "查询日期，格式 YYYY-MM-DD，默认今天",
-                }
+                },
+                "days": {
+                    "type": "integer",
+                    "description": f"往前找多少天，默认 {WINDOW_DAYS_DEFAULT}；0 = 不限",
+                },
             },
         },
     },
@@ -134,7 +166,11 @@ TOOLS = [
                 "date": {
                     "type": "string",
                     "description": "查询日期，格式 YYYY-MM-DD，默认今天",
-                }
+                },
+                "days": {
+                    "type": "integer",
+                    "description": f"只读最近多少天，默认 {WINDOW_DAYS_DEFAULT}；0 = 不限",
+                },
             },
         },
     },
