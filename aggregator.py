@@ -87,22 +87,30 @@ def aggregate_hr(rows):
 def pick_sleep_interval(sleep_time_rows, date_str):
     """从全部睡眠时间段中挑出属于 date_str 的那一段。
 
-    规则：优先按"醒来日期 == date_str"匹配（跨天睡眠归属于醒来的那天）；
-    其次按"入睡日期 == date_str"兜底。返回 (start_ts, end_ts) 或 None。
+    规则（2026-10-04 修正）：
+    - 优先在"醒来日期 == date_str"的那批里取**最长的一段**（＝主睡眠）；
+    - 没有再退回"入睡日期 == date_str"那批，同样取最长。
+    ⚠️ 旧逻辑取"倒序第一条"，会把午睡/碎片当成主睡眠
+    （实测：10-02 挑成了 14:49→15:59 的 70 分钟，而真正的主睡眠是 00:36→07:31 的 6h55m）。
+    跨天睡眠仍归属"醒来的那天"。
     """
-    fallback = None
-    for row in sleep_time_rows:
-        s = db.normalize_ts(row.get("TIMESTAMP"))
-        e = db.normalize_ts(row.get("WAKEUP_TIME"))
-        if s is None or e is None or e <= s:
-            continue
-        wake_date = datetime.fromtimestamp(e).date().isoformat()
-        if wake_date == date_str:
-            return (s, e)
-        start_date = datetime.fromtimestamp(s).date().isoformat()
-        if start_date == date_str and fallback is None:
-            fallback = (s, e)
-    return fallback
+    def _candidates(by_wake):
+        out = []
+        for row in sleep_time_rows:
+            s = db.normalize_ts(row.get("TIMESTAMP"))
+            e = db.normalize_ts(row.get("WAKEUP_TIME"))
+            if s is None or e is None or e <= s:
+                continue
+            pivot = e if by_wake else s
+            if datetime.fromtimestamp(pivot).date().isoformat() == date_str:
+                out.append((s, e))
+        return out
+
+    for by_wake in (True, False):
+        cands = _candidates(by_wake)
+        if cands:
+            return max(cands, key=lambda se: se[1] - se[0])
+    return None
 
 
 def aggregate_sleep(date_str, interval, stage_rows):
